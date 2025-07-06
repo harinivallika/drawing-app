@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Drawing App</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background-image: url("imm.jpg") ;
+      background-size: cover;
+      background-position: center;
+
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+ {
+      margin-bottom: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    canvas {
+      border: 2px solid #333;
+      background: white;
+      touch-action: none;
+    }
+
+    button, input[type="range"], input[type="color"] {
+      padding: 5px 10px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h2>🎨 Draw your imagination</h2>
+
+  <div id="controls">
+    <input type="color" id="colorPicker" value="#000000">
+    <label>🖍️ Size:
+      <input type="range" id="brushSize" min="1" max="20" value="5">
+    </label>
+    <button onclick="setEraser(false); setFillMode(false)">🖌️ Brush</button>
+    <button onclick="setEraser(true); setFillMode(false)">🧼 Eraser</button>
+    <button onclick="setFillMode(true)">🪣 Fill</button>
+    <button onclick="undo()">↩️ Undo</button>
+    <button onclick="redo()">↪️ Redo</button>
+    <button onclick="clearCanvas()">🗑️ Clear</button>
+    <button onclick="saveCanvas()">💾 Save</button>
+  </div>
+
+  <canvas id="canvas" width="600" height="400"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let drawing = false;
+    let eraser = false;
+    let fillMode = false;
+    let history = [];
+    let redoStack = [];
+    function setFillMode(value) {
+      fillMode = value;
+      if (value) eraser = false;
+    }
+
+
+    function startDraw(x, y) {
+      drawing = true;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    }
+
+    function draw(x, y) {
+      if (!drawing) return;
+
+      ctx.lineWidth = document.getElementById("brushSize").value;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = eraser ? "#ffffff" : document.getElementById("colorPicker").value;
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+
+    function stopDraw() {
+      if (!drawing) return;
+      drawing = false;
+      ctx.closePath();
+      // Save to history for undo
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      redoStack = []; // Clear redo when new action happens
+    }
+
+    function setEraser(value) {
+      eraser = value;
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      redoStack = [];
+    }
+
+    function saveCanvas() {
+      const link = document.createElement("a");
+      link.download = "drawing.png";
+      link.href = canvas.toDataURL();
+      link.click();
+    }
+
+    function undo() {
+      if (history.length === 0) return;
+      redoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      const lastState = history.pop();
+      ctx.putImageData(lastState, 0, 0);
+    }
+
+    function redo() {
+      if (redoStack.length === 0) return;
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      const nextState = redoStack.pop();
+      ctx.putImageData(nextState, 0, 0);
+    }
+
+
+    // Mouse support
+    canvas.addEventListener("mousedown", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor(e.clientX - rect.left);
+      const y = Math.floor(e.clientY - rect.top);
+      if (fillMode) {
+        fillAt(x, y);
+      } else {
+        startDraw(x, y);
+      }
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      draw(e.clientX - rect.left, e.clientY - rect.top);
+    });
+
+    canvas.addEventListener("mouseup", stopDraw);
+    canvas.addEventListener("mouseout", stopDraw);
+
+
+    // Touch support
+    canvas.addEventListener("touchstart", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      const x = Math.floor(touch.clientX - rect.left);
+      const y = Math.floor(touch.clientY - rect.top);
+      if (fillMode) {
+        fillAt(x, y);
+      } else {
+        startDraw(x, y);
+      }
+    });
+    // Flood fill (bucket fill) implementation
+    function fillAt(x, y) {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const width = canvas.width;
+      const height = canvas.height;
+      const targetColor = getPixel(data, x, y, width);
+      const fillColor = hexToRgba(document.getElementById("colorPicker").value);
+      if (colorsMatch(targetColor, fillColor)) return;
+
+      const stack = [[x, y]];
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        let idx = (cy * width + cx) * 4;
+        if (!inBounds(cx, cy, width, height)) continue;
+        let currentColor = getPixel(data, cx, cy, width);
+        if (!colorsMatch(currentColor, targetColor)) continue;
+        setPixel(data, cx, cy, fillColor, width);
+        stack.push([cx + 1, cy]);
+        stack.push([cx - 1, cy]);
+        stack.push([cx, cy + 1]);
+        stack.push([cx, cy - 1]);
+      }
+      ctx.putImageData(imageData, 0, 0);
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      redoStack = [];
+    }
+
+    function getPixel(data, x, y, width) {
+      const idx = (y * width + x) * 4;
+      return [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
+    }
+
+    function setPixel(data, x, y, color, width) {
+      const idx = (y * width + x) * 4;
+      data[idx] = color[0];
+      data[idx + 1] = color[1];
+      data[idx + 2] = color[2];
+      data[idx + 3] = 255;
+    }
+
+    function colorsMatch(a, b) {
+      return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+    }
+
+    function inBounds(x, y, width, height) {
+      return x >= 0 && y >= 0 && x < width && y < height;
+    }
+
+    function hexToRgba(hex) {
+      hex = hex.replace('#', '');
+      if (hex.length === 3) {
+        hex = hex.split('').map(c => c + c).join('');
+      }
+      const num = parseInt(hex, 16);
+      return [
+        (num >> 16) & 255,
+        (num >> 8) & 255,
+        num & 255,
+        255
+      ];
+    }
+
+    canvas.addEventListener("touchmove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      draw(touch.clientX - rect.left, touch.clientY - rect.top);
+      e.preventDefault(); // prevent page scroll
+    });
+
+    canvas.addEventListener("touchend", stopDraw);
+  </script>
+</body>
+</html>
